@@ -2,84 +2,101 @@ package wallethub;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.LineIterator;
+import org.apache.commons.lang3.time.StopWatch;
 
 /**
- * Approach:
- * 
- * 1) Iterate lines of file
- * 
- * 2) Split lines and flatten using flatmap
- * 
- * 3) Build phrase frequency map using collect
- * 
- * 4) Store Top K Phrases in minHeap/priority queue
- * 
+ * Read file and store word count in a map. Then prepare minHeap of size K 
+ * from map. Finally extract top k from heap 
  * @author nikhil
  */
 public class TopKFrequentPhrases {
-  final int k;
-  Map<String, Integer> frequencyMap;
-  final PriorityQueue<WordFreq> topKMinHeap;
-  final Path inputFile;
+    private final int topK;
+    private final PriorityQueue<WordFreq> topKMinHeap;
+    private Map<String, Integer> frequencyMap;
 
-  public TopKFrequentPhrases(int k, Path inputFile) {
-    this.k = k;
-    this.frequencyMap = new HashMap<String, Integer>();
-    this.topKMinHeap = new PriorityQueue<WordFreq>();
-    this.inputFile = inputFile;
-  }
-
-  public WordFreq[] topKPhrases(Path filePath) throws IOException, InterruptedException {
-    LineIterator it = FileUtils.lineIterator(filePath.toFile(), "UTF-8");
-    int i = 0;
-    try {
-
-      String line;
-      while (it.hasNext()) {
-        line = it.nextLine();
-        i++;
-        // if (i == 10000) {
-        // i = 0;
-        // Thread.sleep(100);
-        // }
-        // do something with line
-        // System.out.println(i++);
-      }
-    } finally {
-      LineIterator.closeQuietly(it);
-      System.out.println("linecount: " + i);
+    public TopKFrequentPhrases(int k) {
+        this.topK = k;
+        this.frequencyMap = new HashMap<String, Integer>();
+        this.topKMinHeap = new PriorityQueue<WordFreq>(k, Comparator.comparingInt(wc -> wc.getFreq()));
     }
-    return null;
-  }
 
-  private void topKHeap() {
-    for (Map.Entry<String, Integer> entry : frequencyMap.entrySet()) {
-      WordFreq wordFreq = new WordFreq(entry.getKey(), entry.getValue().intValue());
-      if (topKMinHeap.size() < k) {
-        topKMinHeap.add(wordFreq);
-      } else if (entry.getValue().intValue() > topKMinHeap.peek().freq) {
-        topKMinHeap.poll();
-        topKMinHeap.add(wordFreq);
-      }
+    public WordFreq[] topKPhrasesApproach(Path filePath) throws IOException {
+        StopWatch totalStopWatch = new StopWatch();
+        totalStopWatch.start();
+        wordCountFromFile(filePath);
+        heapFromWordCountApproach();
+        WordFreq[] topK = extractFromHeap();
+        totalStopWatch.stop();
+        System.out.println("Total Time taken : " + totalStopWatch.getTime());
+        return topK;
     }
-  }
 
-  public static void main(String[] args) throws InterruptedException, IOException {
-    Path filePath =
-        FileSystems.getDefault().getPath("/Users/nikhil/Desktop/wallethub_test_files", "fileCopy");
-    TopKFrequentPhrases frequentPhrases = new TopKFrequentPhrases(3, filePath);
-    final WordFreq[] topK = frequentPhrases.topKPhrases(filePath);
+    /**
+     * 
+     * Iterate lines of file. While processing each line,
+     * Split line into 50 phrases and update the wordcount.
+     * 
+     * O(numLines * lengthOfLine)
+     * @param filePath
+     * @throws IOException
+     */
+    public void wordCountFromFile(Path filePath) throws IOException {
+        try (Stream<String> lines = Files.lines(filePath)) {
+            Function<String, Stream<String>> lineSplitFunc = new Function<String, Stream<String>>() {
+                @Override
+                public Stream<String> apply(String line) {
+                    return Arrays.asList(line.split("\\|")).stream();
+                }
+            };
+            Stream<String> words = lines.flatMap(lineSplitFunc);
+            frequencyMap = words.collect(Collectors.toConcurrentMap(elem -> elem, elem -> 1, Integer::sum));
+        }
+    }
 
+    /**
+     * Iterate wordCountMap
+     * For each entry, either (add to heap) or (remove top and then add)
+     * O(u(no. of unique entries in map) * logk)
+     */
+    private void heapFromWordCountApproach() {
+        for (Map.Entry<String, Integer> entry : frequencyMap.entrySet()) {
+            WordFreq wordFreq = new WordFreq(entry.getKey(), entry.getValue().intValue());
+            if (topKMinHeap.size() < topK) {
+                topKMinHeap.add(wordFreq);
+            } else if (entry.getValue().intValue() > topKMinHeap.peek().freq) {
+                topKMinHeap.poll();
+                topKMinHeap.add(wordFreq);
+            }
+        }
+    }
 
-    // for (WordFreq word : topK) {
-    // System.out.println(word.getWord() + ":" + word.getFreq());
-    // }
-  }
+    // O(u(no. of unique entries in map)
+    public WordFreq[] extractFromHeap() {
+        final WordFreq[] topKWords = new WordFreq[topK];
+        int i = 0;
+        while (topKMinHeap.size() > 0) {
+            topKWords[i++] = topKMinHeap.remove();
+        }
+        return topKWords;
+    }
+
+    public static void main(String[] args) throws InterruptedException, IOException {
+        Path filePath = FileSystems.getDefault().getPath("/Users/nikhil/Desktop", "test1");
+        TopKFrequentPhrases frequentPhrases = new TopKFrequentPhrases(4);
+        final WordFreq[] topK1 = frequentPhrases.topKPhrasesApproach(filePath);
+        for (WordFreq word : topK1) {
+            System.out.println(word.getWord() + ":" + word.getFreq());
+        }
+    }
 }
